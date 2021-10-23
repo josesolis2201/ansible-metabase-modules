@@ -4,6 +4,12 @@ import requests
 import os
 import time
 import psycopg2
+from requests.api import delete
+
+def buildSessionId(api_token):
+    auth_header = {'X-Metabase-Session': api_token}
+
+    return(auth_header)
 
 
 def getApiToken(base_host, username, password):
@@ -24,104 +30,246 @@ def getApiToken(base_host, username, password):
         return(error_message, response.status_code)
 
 
-def getTargetDatabases(psql_user, psql_password, psql_host, database_filter_list, database):
-
-    unwanted_chars = '(),'
-
-    connection = psycopg2.connect(host=psql_host, port=5432, database=database, user=psql_user, password=psql_password)
-    cursor = connection.cursor()
-    cursor.execute ("""SELECT datname FROM pg_database""")
-    query_results = cursor.fetchall()
-
-    clean_results = [''.join(x for x in string if not x in unwanted_chars) for string in query_results]
-    database_list = list(set(clean_results) - set(database_filter_list))
-
-    return(database_list)
-
 def getCurrentDatabases(api_token, base_host):
 
-    headers = { "X-Metabase-Session: %s"}%api_token
-    host = base_host + "/api/database"
-
-    response = requests.post(host, headers=headers).json()
-
+    current_databases = []
+    auth_header = buildSessionId(api_token)
+    host = base_host + "/api/database/"
+    response = requests.get(host, headers=auth_header)
 
     if response.status_code == 200:
-        api_token = response.json()['id']
-        return(api_token, response.status_code)
-    else:
-        error_message = "Authentication for %s failed"%host
-        return(error_message, response.status_code)
+        for db_details in response.json()['data']:
+            tmp_dict = {"ui_name": db_details['name'],
+                        "backend_name": db_details['details']['db'],
+                        "id": db_details['id']}
+            current_databases.append(tmp_dict)
 
-def manageDatabases(data):
+        return(current_databases, response.status_code)
+    else:
+
+        return(current_databases, response.status_code)
+
+
+def updateExistingDB(base_host,
+                     psql_user,
+                     psql_password,
+                     psql_host,
+                     psql_port,
+                     api_token,
+                     database,
+                     database_ui_name,
+                     id):
+
+    auth_header = buildSessionId(api_token)
+    json_data = {
+        "engine": "postgres",
+        "name": database_ui_name,
+        "details": {
+            "db": database,
+            "dbname": database,
+            "host": psql_host,
+            "user": psql_user,
+            "password": psql_password,
+            "port": psql_port,
+        }
+    }
+
+    host = base_host + "/api/database/" + str(id)
+
+    update_request = requests.put(host, headers=auth_header, json=json_data)
+
+    return(update_request.status_code)
+
+
+def registerNewDB(base_host,
+                  psql_user,
+                  psql_password,
+                  psql_host,
+                  psql_port,
+                  api_token,
+                  database,
+                  database_ui_name):
+
+    auth_header = buildSessionId(api_token)
+    json_data = {
+        "engine": "postgres",
+        "name": database_ui_name,
+        "details": {
+            "dbname": database,
+            "db": database,
+            "host": psql_host,
+            "user": psql_user,
+            "password": psql_password,
+            "port": psql_port,
+        }
+    }
+
+    host = base_host + "/api/database/"
+
+    update_request = requests.post(host, headers=auth_header, json=json_data)
+    return(update_request.status_code)
+
+def deleteDB(base_host,
+             api_token,
+             id):
+
+    auth_header = buildSessionId(api_token)
+
+    host = base_host + "/api/database/" + str(id)
+
+    delete_request = requests.delete(host, headers=auth_header)
+
+    return(delete_request.status_code)
+
+
+def manageDatabaseAbsent(data):
     has_changed = False
     is_error = False
 
-    if data['metabase_scheme']:
-        metabase_scheme = data['metabase_scheme'] + "://"
+    if data['database_name_override']:
+        database_ui_name = data['database_name_override']
     else:
-        metabase_scheme = "https://"
+        database_ui_name = data['database']
 
-    if data['exclude_db_list']:
-        database_filter = data['exclude_db_list']
-    else:
-        database_filter = []
-
-    if data['database']:
-        psql_database = data['database']
-    else:
-        psql_database = "postgres"
+    metabase_scheme = data['metabase_scheme'] + "://"
 
     metabase_host = metabase_scheme + data['metabase_url']
-    metabase_user = data['metabase_admin_user']
-    metabase_password = data['metabase_admin_password']
+    database = data['database']
+    api_token = data['metabase_api_token']
+
+    current_databases, query_validation = getCurrentDatabases(api_token, metabase_host)
+
+    if query_validation != 200:
+        is_error = True
+        meta = {"error": "Got %s status code when trying to query current database list"%str(query_validation)}
+        return (is_error, has_changed, meta)
+
+    for i in current_databases:
+        if i['backend_name'] == database:
+            print("exists")
+            id = i['id']
+            delete_validation = deleteDB(metabase_host,
+                                        api_token,
+                                        id)
+
+    if delete_validation == 204:
+        has_changed = True
+        meta = {"msg": "%s database deleted succesfully"%database_ui_name}
+        return (is_error, has_changed, meta)
+    elif delete_validation == 200:
+        has_changed = False
+        meta = {"msg": "%s database is not present in this metabase instance"%database_ui_name}
+        return (is_error, has_changed, meta)
+    else:
+        is_error = True
+        meta = {"msg": "Delete operation failed with %s http code"%str(delete_validation)}
+
+
+def manageDatabasePresent(data):
+    has_changed = False
+    is_error = False
+
+    if data['database_name_override']:
+        database_ui_name = data['database_name_override']
+    else:
+        database_ui_name = data['database']
+
+    metabase_scheme = data['metabase_scheme'] + "://"
+
+    metabase_host = metabase_scheme + data['metabase_url']
+    database = data['database']
     psql_user = data['psql_user']
     psql_password = data['psql_password']
     psql_host = data['psql_host']
+    psql_port = data['psql_port']
+    api_token = data['metabase_api_token']
 
-    temp_token, api_token_status_code = getApiToken(metabase_host,
-                                                    metabase_user,
-                                                    metabase_password)
+    current_databases, query_validation = getCurrentDatabases(api_token, metabase_host)
 
-    if api_token_status_code != 200:
+    if query_validation != 200:
         is_error = True
-        meta = {"error": "%s"}%temp_token
+        meta = {"error": "Got %s status code when trying to query current database list"%str(query_validation)}
         return (is_error, has_changed, meta)
+
+    print(current_databases)
+    for i in current_databases:
+        print(database_ui_name, i['ui_name'], i['backend_name'])
+        if i['ui_name'] == database_ui_name:
+            id = i['id']
+            manage_validation = updateExistingDB(metabase_host,
+                                        psql_user,
+                                        psql_password,
+                                        psql_host,
+                                        psql_port,
+                                        api_token,
+                                        database,
+                                        database_ui_name,
+                                        id)
+            manage_action = "update"
+
+    if not any(i['ui_name'] == database_ui_name for i in current_databases):
+        manage_validation = registerNewDB(metabase_host,
+                                    psql_user,
+                                    psql_password,
+                                    psql_host,
+                                    psql_port,
+                                    api_token,
+                                    database,
+                                    database_ui_name)
+        manage_action = "register"
+
+    if manage_validation == 200:
+        if manage_action == "update":
+            has_changed = False
+            meta = {"msg": "%s database updated succesfully"%database_ui_name}
+            return (is_error, has_changed, meta)
+        if manage_action == "register":
+            has_changed = True
+            meta = {"msg": "%s database created succesfully"%database_ui_name}
+            return (is_error, has_changed, meta)
     else:
-        api_token = temp_token
-
-    current_databases = getCurrentDatabases(api_token, metabase_host)
-
-    target_databases = getTargetDatabases(psql_user,
-                                          psql_password,
-                                          psql_host,
-                                          database_filter,
-                                          psql_database)
-
+        if manage_action == "update":
+            is_error = True
+            meta = {"msg": "Got http code %s when trying to update database"%str(manage_validation)}
+            return (is_error, has_changed, meta)
+        if manage_action == "register":
+            is_error = True
+            meta = {"msg": "Got http code %s when trying to register database"%str(manage_validation)}
+            return (is_error, has_changed, meta)
 
 
 def main():
 
     fields = {
         "metabase_url": {"required": True, "type": "str"},
-        "metabase_scheme": {"required": False, "type": "str"},
-        "metabase_admin_user": {"required": True, "type": "str"},
-        "metabase_admin_password": {"required": True, "type": "str", "no_log": True},
-        "psql_user": {"required": True, "type": "str"},
-        "sql_password": {"required": True, "type": "str", "no_log": True},
+        "metabase_scheme": {"default": "https", "type": "str"},
+        "metabase_api_token": {"required": True, "type": "str"},
         "psql_host": {"required": True, "type": "str"},
-        "database_prefix": {"required": False, "type": "str"},
-        "database_lowercase": {"required": False, "type": "str"},
-        "exclude_db_list": {"required": False, "type": "str"}
+        "psql_port": {"default": "5432", "type": "str"},
+        "psql_user": {"required": True, "type": "str"},
+        "psql_password": {"required": True, "type": "str", "no_log": True},
+        "database": {"required": True, "type": "str"},
+        "database_name_override": {"required": False, "type": "str"},
+        "state": {
+            "default": "present",
+            "choices": ['present', 'absent'],
+            "type": "str"
+        }
+    }
+
+    choice_map = {
+        "present": manageDatabasePresent,
+        "absent": manageDatabaseAbsent
     }
 
     module = AnsibleModule(argument_spec=fields)
-    is_error, has_changed, result = manageDatabases(module.params)
+    is_error, has_changed, result = choice_map.get(module.params['state'])(module.params)
 
     if not is_error:
         module.exit_json(changed=has_changed, meta=result)
     else:
         module.fail_json(msg="Something went wrong.", meta=result)
+
 
 if __name__ == '__main__':
     main()
