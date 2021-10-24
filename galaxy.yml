@@ -1,6 +1,6 @@
 namespace: josesolis2201
 name: metabase
-version: 0.1.1
+version: 0.0.1
 readme: README.md
 authors:
   - Jose Solis <josesolisrosales@gmail.com>
@@ -12,7 +12,6 @@ license:
 tags:
   - metabase
 
-dependencies: {}
 repository: https://github.com/josesolis2201/rancher-metabase-modules
 issues: https://github.com/josesolis2201/rancher-metabase-modules/issues
 

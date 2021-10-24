@@ -243,7 +243,7 @@ def main():
     fields = {
         "metabase_url": {"required": True, "type": "str"},
         "metabase_scheme": {"default": "https", "type": "str"},
-        "metabase_api_token": {"required": True, "type": "str"},
+        "metabase_api_token": {"required": True, "type": "str", "no_log": True},
         "psql_host": {"required": True, "type": "str"},
         "psql_port": {"default": "5432", "type": "str"},
         "psql_user": {"required": True, "type": "str"},
