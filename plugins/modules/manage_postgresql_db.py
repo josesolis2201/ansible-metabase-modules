@@ -39,14 +39,19 @@ def getCurrentDatabases(api_token, base_host):
 
     if response.status_code == 200:
         for db_details in response.json()['data']:
-            tmp_dict = {"ui_name": db_details['name'],
-                        "backend_name": db_details['details']['db'],
-                        "id": db_details['id']}
-            current_databases.append(tmp_dict)
-
+            if db_details['engine'] == "postgres":
+                if "db" in db_details['details']:
+                    tmp_dict = {"ui_name": db_details['name'],
+                                "backend_name": db_details['details']['db'],
+                                "id": db_details['id']}
+                    current_databases.append(tmp_dict)
+                else:
+                    tmp_dict = {"ui_name": db_details['name'],
+                    "backend_name": db_details['details']['dbname'],
+                    "id": db_details['id']}
+                    current_databases.append(tmp_dict)
         return(current_databases, response.status_code)
     else:
-
         return(current_databases, response.status_code)
 
 
@@ -77,7 +82,6 @@ def updateExistingDB(base_host,
     host = base_host + "/api/database/" + str(id)
 
     update_request = requests.put(host, headers=auth_header, json=json_data)
-
     return(update_request.status_code)
 
 
@@ -146,7 +150,6 @@ def manageDatabaseAbsent(data):
 
     for i in current_databases:
         if i['backend_name'] == database:
-            print("exists")
             id = i['id']
             delete_validation = deleteDB(metabase_host,
                                         api_token,
@@ -191,9 +194,7 @@ def manageDatabasePresent(data):
         meta = {"error": "Got %s status code when trying to query current database list"%str(query_validation)}
         return (is_error, has_changed, meta)
 
-    print(current_databases)
     for i in current_databases:
-        print(database_ui_name, i['ui_name'], i['backend_name'])
         if i['ui_name'] == database_ui_name:
             id = i['id']
             manage_validation = updateExistingDB(metabase_host,
