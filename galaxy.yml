@@ -1,6 +1,6 @@
 namespace: josesolis2201
 name: metabase
-version: 0.0.1
+version: 0.0.2
 readme: README.md
 authors:
   - Jose Solis <josesolisrosales@gmail.com>
