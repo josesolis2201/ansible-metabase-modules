@@ -1,9 +1,6 @@
 from ansible.module_utils.common.validation import safe_eval
 from ansible.module_utils.basic import AnsibleModule
 import requests
-import os
-import time
-import psycopg2
 from requests.api import delete
 
 def buildSessionId(api_token):
